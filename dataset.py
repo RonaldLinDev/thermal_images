@@ -4,15 +4,19 @@ import os
 class dataloader:
 
     def __init__(self, path: str) -> None:
+        prev = os.getcwd()
+        self.path = path
         try:
-            self.path = path
-            with open(path + 'data.yaml', 'r') as stream:
+            os.chdir(self.path)
+            with open('data.yaml', 'r') as stream:
                 self.info = yaml.safe_load(stream)
                 self.id_to_label = {i : label for i, label in enumerate(self.info['names'])}
-        except yaml.Exception as e:
+            os.chdir(prev)
+        except yaml.YAMLError as e:
             print('error loading data, make sure your data.yaml folder is unchanged', e)
         except (OSError, IOError) as e:
             print('cant find path specified', e)
+        print(self.info)
 
 
     # note file_name has no filetype
@@ -29,7 +33,7 @@ class dataloader:
             with open(label_path) as f:
                 for line in f:
                     tokens = line.split()
-                ret['annotations'].append((tokens[0], tokens[1:]))    
+                    ret['annotations'].append({'labels': tokens[0], 'bounding_box': tokens[1:]})    
             os.chdir(prev)
         except (OSError, IOError) as e:
             print('couldnt find file')
@@ -37,8 +41,19 @@ class dataloader:
             print('couldnt find that split')
 
         return ret
+    
+    ## returns a dictionary with the keys image_path and annotations -> list of dicts
             
-        
+    def get_split(self, split: str) -> list[dict]:
+        ret = list()
+        try:
+            for file in os.listdir(os.path.join(self.path, self.info[split][3:])):
+                ret.append(self.read_pair(file, split))
+        except KeyError as e:
+            print("couldn't find split")
+        return ret
 
+    def get_all(self) -> list[dict]:
+        return self.get_split('train') + self.get_split('test') + self.get_split('val')
 
 
