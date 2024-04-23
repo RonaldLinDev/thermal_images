@@ -1,5 +1,9 @@
 import yaml
 import os
+from autodistill_grounded_sam import GroundedSAM
+from autodistill.detection import CaptionOntology
+from autodistill_yolov8 import YOLOv8
+import cv2
 
 class dataloader:
 
@@ -16,7 +20,7 @@ class dataloader:
             print('error loading data, make sure your data.yaml folder is unchanged', e)
         except (OSError, IOError) as e:
             print('cant find path specified', e)
-        print(self.info)
+    
 
 
     # note file_name has no filetype
@@ -28,9 +32,9 @@ class dataloader:
             os.chdir(self.path)
             ret['image_path'] = self.info[split][3:] + image_name
             # gets rid of the ../ that os.chdir doesnt like
-            label_path = os.path.join(self.info[split][3:-6], 'labels', os.path.splitext(image_name)[0] + '.txt')
             
-            with open(label_path) as f:
+            
+            with open(self.get_label_path(split, image_name)) as f:
                 for line in f:
                     tokens = line.split()
                     ret['annotations'].append({'labels': tokens[0], 'bounding_box': tokens[1:]})    
@@ -42,7 +46,9 @@ class dataloader:
 
         return ret
     
-    ## returns a dictionary with the keys image_path and annotations -> list of dicts
+    # returns a dictionary with the keys image_path and annotations -> list of dicts
+    # 'annotations', 'image_path'
+        # 'labels', 'bounding_box'
             
     def get_split(self, split: str) -> list[dict]:
         ret = list()
@@ -55,5 +61,67 @@ class dataloader:
 
     def get_all(self) -> list[dict]:
         return self.get_split('train') + self.get_split('test') + self.get_split('val')
+    
+
+    def combine(self, other: 'dataloader'): # should manually prune dataset for agreed vocab, cant really do anything rn 
+        missing_in_self = [label for label in other.id_to_label.values() if label not in self.id_to_label.values()]
+        
+        ## DISTILLING SELF
+        with open(os.path.join(self.path, 'data.yaml'), 'w') as stream:
+            self.info['nc'] += len(missing_in_self)
+            self.info['names'] += missing_in_self
+            self.id_to_label = {i : label for i, label in enumerate(self.info['names'])}
+            stream.write(yaml.safe_dump(self.info))
+
+        for split in ['train', 'test', 'val']:
+            for image_path in os.listdir(os.path.join(self.path, self.info[split][3:])):
+                self.distill_image(image_path, split, missing_in_self)
+
+
+
+        missing_in_other = [label for label in self.id_to_label.values() if label not in other.id_to_label.values()]
+        # add missing labels to yaml files
+
+
+    
+            
+
+    def distill_image(self, image_name: str, split: str, missing: list, confidence_threshold: int, prompt: str = ''):
+        prev = os.getcwd()
+        os.chdir(self.path)
+        caption_ontology = CaptionOntology({prompt + label : label for label in missing})
+        base_model = GroundedSAM(caption_ontology)
+        new_annotations = []
+        for box, _, confidence, class_id, _ in base_model.predict(self.get_image_path(split, image_name)):
+            if confidence > confidence_threshold:
+                h, w, _ = cv2.imread(self.get_image_path(split, image_name)).shape
+                x_center = ((box[0] + box[2]) / 2.0) / w
+                y_center = ((box[1] + box[3]) / 2.0) / h
+                width = (box[2] - box[0]) / w
+                height = (box[3] - box[1]) / h
+                new_annotations.append(f'{self.info['names'].index(base_model.ontology.classes()[class_id])} {x_center} {y_center} {width} {height}')
+        with open(self.get_label_path(split, image_name), 'a') as f:
+            for annotation in new_annotations:
+                f.write('\n' + annotation)
+            
+        print(new_annotations)
+        os.chdir(prev)
+
+
+
+        
+
+    def get_label_path(self, split: str, image_path: str) -> str:
+        return os.path.join(self.info[split][3:-6], 'labels', os.path.splitext(image_path)[0] + '.txt')
+
+    def get_image_path(self, split: str, image_path: str) -> str:
+        return os.path.join(self.info[split][3:-6], 'images', image_path)
+        
+        
+
+
+        
+        
+ 
 
 
