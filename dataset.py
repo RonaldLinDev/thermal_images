@@ -65,21 +65,44 @@ class dataloader:
 
     def combine(self, other: 'dataloader'): # should manually prune dataset for agreed vocab, cant really do anything rn 
         missing_in_self = [label for label in other.id_to_label.values() if label not in self.id_to_label.values()]
+        missing_in_other = [label for label in self.id_to_label.values() if label not in other.id_to_label.values()]
         
         ## DISTILLING SELF
         with open(os.path.join(self.path, 'data.yaml'), 'w') as stream:
             self.info['nc'] += len(missing_in_self)
             self.info['names'] += missing_in_self
             self.id_to_label = {i : label for i, label in enumerate(self.info['names'])}
-            stream.write(yaml.safe_dump(self.info))
+            stream.write(yaml.dump(self.info))
+
+        # for split in ['train', 'test', 'val']:
+            # for image_name in os.listdir(os.path.join(self.path, self.info[split][3:])):
+            #     self.distill_image(image_name, split, missing_in_self)
+        
+        ## DISTILLING OTHER
+        
+        with open(os.path.join(other.path, 'data.yaml'), 'w') as stream:
+            other.info['nc'] += len(missing_in_self)
+            other.info['names'] += missing_in_self
+            other.id_to_label = {i : label for i, label in enumerate(self.info['names'])}
+            stream.write(yaml.dump(self.info))
 
         for split in ['train', 'test', 'val']:
-            for image_path in os.listdir(os.path.join(self.path, self.info[split][3:])):
-                self.distill_image(image_path, split, missing_in_self)
+            # for image_name in os.listdir(os.path.join(other.path, other.info[split][3:])):
+            #     other.distill_image(image_name, split, missing_in_self)
+            annotation_path = os.path.join(other.path, other.info[split][3:-6], 'labels/')
+            for annotation in os.listdir(annotation_path):
+                with open(annotation_path + annotation, 'r+') as f:
+                    newlines = []
+                    for line in f:
+                            newline = str(self.info['names'].index(other.info['names'][int(line[0])])) + line[1:]
+                            print(newline)
+                            newlines.append(newline)
+                    f.truncate(0)
+                    f.seek(0)
+                    for line in newlines:
+                        f.write(line)
 
-
-
-        missing_in_other = [label for label in self.id_to_label.values() if label not in other.id_to_label.values()]
+        
         # add missing labels to yaml files
 
 
@@ -111,14 +134,25 @@ class dataloader:
 
         
 
-    def get_label_path(self, split: str, image_path: str) -> str:
-        return os.path.join(self.info[split][3:-6], 'labels', os.path.splitext(image_path)[0] + '.txt')
+    def get_label_path(self, split: str, image_name: str) -> str:
+        return os.path.join(self.info[split][3:-6], 'labels', os.path.splitext(image_name)[0] + '.txt')
 
-    def get_image_path(self, split: str, image_path: str) -> str:
-        return os.path.join(self.info[split][3:-6], 'images', image_path)
+    def get_image_path(self, split: str, image_name: str) -> str:
+        return os.path.join(self.info[split][3:-6], 'images', image_name)
         
-        
+    #moves split to other    
+    def move_split(self, split: str, other: 'dataloader') -> None:
+        for image in os.listdir(self.path + self.info[split][3:]):
+            os.rename(os.path.join(self.path, self.get_image_path(split, image)), os.path.join(other.path, other.get_image_path(split, image)))
+        for annotation in os.listdir(annotation_path := os.path.join(self.path, self.info[split][3:-6], 'labels/')):
+            os.rename(os.path.join(self.path, self.get_label_path(split, image)), os.path.join(other.path, other.get_label_path(split, image)))
 
+        
+    def move_all(self, other: 'dataloader'):
+        for split in ['train', 'test', 'val']:
+            self.move_split(split, other)
+        os.remove(os.path.join(self.path, 'data.yaml'))
+        os.removedirs(self.path)
 
         
         
